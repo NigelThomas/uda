@@ -65,12 +65,12 @@ create or replace function negateLongOrNull(i bigint)
   no sql
   external name 'plugin/libsampleUdfs.so:negateLong';
 
-create or replace function concat(x varchar(100), y varchar(100))
-  returns varchar(200)
-  language c
-  parameter style general
-  no sql
-  external name 'plugin/libsampleUdfs.so:concatVC';
+-- create or replace function concat(x varchar(100), y varchar(100))
+--   returns varchar(200)
+--   language c
+--   parameter style general
+--   no sql
+--   external name 'plugin/libsampleUdfs.so:concatVC';
 
 create or replace function addSome(w double, x smallint, y int, z bigint)
   returns double
@@ -124,33 +124,62 @@ create or replace aggregate function mySum(i int)
   no sql
   external name 'plugin/libsampleUdfs.so:myAdd';
 
-create or replace aggregate function wVarPop(x double)
+create or replace analytic function wVarPop(x double)
   returns double
   language c
   parameter style general
   no sql
   external name 'plugin/libsampleUdfs.so:welfordPopVariance';
 
-create or replace aggregate function wVarSamp(x double)
+create or replace analytic function wVarPop(x double)
+  returns double
+  language c
+  parameter style general
+  no sql
+  external name 'plugin/libsampleUdfs.so:welfordPopVariance';
+
+create or replace analytic function wVarSamp(x double)
   returns double
   language c
   parameter style general
   no sql
   external name 'plugin/libsampleUdfs.so:welfordSampVariance';
 
-create or replace aggregate function wMean(x double)
+create or replace analytic function wMean(x double)
   returns double
   language c
   parameter style general
   no sql
   external name 'plugin/libsampleUdfs.so:welfordMean';
 
-create or replace aggregate function wCount(x double)
+create or replace analytic function wCount(x double)
   returns bigint
   language c
   parameter style general
   no sql
   external name 'plugin/libsampleUdfs.so:welfordCount';
+
+create or replace analytic function cwVarPop(x double)
+  returns double
+  language c
+  parameter style general
+  no sql
+  external name 'plugin/libsampleUdfs.so:cwelfordPopVariance';
+
+create or replace analytic function cwMean(x double)
+  returns double
+  language c
+  parameter style general
+  no sql
+  external name 'plugin/libsampleUdfs.so:cwelfordMean';
+
+create or replace analytic function cwCount(x double)
+  returns bigint
+  language c
+  parameter style general
+  no sql
+  external name 'plugin/libsampleUdfs.so:cwelfordCount';
+
 
 create or replace aggregate function strlist(s varchar(30))
   returns varchar(30)
@@ -158,4 +187,5 @@ create or replace aggregate function strlist(s varchar(30))
   parameter style general
   no sql
   external name 'plugin/libsampleUdfs.so:strlist';
+
 

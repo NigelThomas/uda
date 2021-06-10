@@ -8,3 +8,9 @@ add_library(
 sampleUdfs SHARED
     sampleUdfs.cpp
 )
+
+add_library(
+pctUdfs SHARED
+    percentile.cpp
+)
+

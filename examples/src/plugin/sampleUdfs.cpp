@@ -167,61 +167,193 @@ public:
 };
 INSTALL_UDA(simpleAdd, SimpleAdder, double)
 
-// A non scaler UDA that's still "flat". The size never changes and the accumulator
-// can be "trivially" copied.
-// This computes mean and variance using the Welford algorithm.
+// NT taken welford classes from class Welford : public Count0IsInitialUda
+
 class Welford : public Count0IsInitialUda
 {
-  double mean;
-  int64_t count;
-  double m2;
+    double mean;
+    int64_t count;
+    double m2;
 public:
-  inline Welford() : mean(0), count(0), m2(0) {}
-  
-  inline void add(CalculatorContext ctx, double value) {
-    count++;
-    auto delta = value - mean;
-    mean += delta / count;
-    m2 += delta * (value - mean);
-    if (std::isnan(m2) || std::isnan(mean)) {
-        // could probably do this in getters for slightly better performance
-        ctx.throwException(SqlState::instance().code22003());
-    }
-  }
+    inline Welford() : mean(0), count(0), m2(0) {}
 
-  inline void getSampVariance(CalculatorContext ctx, const ResultRegister<double> &result) const {
-    if (count < 2) {
-      result.toNull();
-    } else {
-      result = m2 / (count - 1);
+    inline void add(CalculatorContext ctx, double value) {
+        //fprintf(stderr, "add count=%ld,%f,%f,%f\n", count, mean, m2, value);
+        count++;
+        auto delta = value - mean;
+        mean += delta / count;
+        m2 += delta * (value - mean);
+        if (std::isnan(m2) || std::isnan(mean)) {
+            // could probably do this in getters for slightly better performance
+            ctx.throwException(fennel::SqlState::instance().code22003());
+        }
+        //fprintf(stderr, "result  count=%ld,%f,%f\n", count, mean, m2);
     }
-  }
-  inline void getPopVariance(CalculatorContext ctx, const ResultRegister<double> &result) const {
-    if (count < 1) {
-      result.toNull();
-    } else {
-      result = m2 / count;
+
+    inline void addAccumulator(CalculatorContext ctx, Welford const &other) {
+        //fprintf(stderr, "addA count=%ld,%f,%f other=%ld,%f,%f\n", count, mean, m2, other.count, other.mean, other.m2);
+        if (other.count == 0) {
+            //fprintf(stderr, "result  same");
+            return;
+        }
+        auto newCount = count + other.count;
+        auto delta = mean - other.mean;
+         mean = (mean * count + other.mean * other.count) / newCount;
+         m2 += other.m2 + delta * delta * count * other.count / newCount;
+        count = newCount;
+        if (std::isnan(m2) || std::isnan(mean)) {
+            // could probably do this in getters for slightly better performance
+            ctx.throwException(fennel::SqlState::instance().code22003());
+        }
+        //fprintf(stderr, "result  count=%ld,%f,%f\n", count, mean, m2);
     }
-  }
-  inline void getMean(CalculatorContext ctx, const ResultRegister<double> &result) const {
-    if (count < 1) {
-      result.toNull();
-    } else {
-      result = mean;
+
+    inline void drop(CalculatorContext ctx, double value) {
+        //fprintf(stderr, "drop count=%ld\n", count);
+        count--;
+        if (count == 0) {
+            mean = 0;
+            m2 = 0;
+            return;
+        }
+        auto delta = mean - value;
+        mean += delta / count;
+        m2 +=  delta * (value - mean);
+        if (std::isnan(m2) || std::isnan(mean)) {
+            // could probably do this in getters for slightly better performance
+            ctx.throwException(fennel::SqlState::instance().code22003());
+        }
+        if (m2 < 0) {
+            m2 = 0;
+        }
     }
-  }
-  inline void getCount(CalculatorContext ctx, const ResultRegister<int64_t> &result) const {
-      result = count;
-  }
+
+    inline void dropAccumulator(CalculatorContext ctx, Welford const &other) {
+        //fprintf(stderr, "dropA count=%ld, %ld\n", count, value.count);
+        if (other.count == 0) {
+            return;
+        }
+        auto newCount = count - other.count;
+        if (newCount == 0) {
+            count = 0;
+            mean = 0;
+            m2 = 0;
+            return;
+        }
+        auto delta = mean - other.mean;
+        mean += delta * other.count / newCount;
+        auto delta2 = other.mean - mean;
+        m2 -= other.m2 + delta2 * delta2 * newCount * other.count / count;
+        count = newCount;
+        if (std::isnan(m2) || std::isnan(mean)) {
+            // could probably do this in getters for slightly better performance
+            ctx.throwException(fennel::SqlState::instance().code22003());
+        }
+        if (m2 < 0) {
+            m2 = 0;
+        }
+    }
+
+    inline void getSampVariance(CalculatorContext ctx, const ResultRegister<double> &result) const {
+        if (count < 2) {
+            result.toNull();
+        } else {
+            result = m2 / (count - 1);
+        }
+    }
+    inline void getPopVariance(CalculatorContext ctx, const ResultRegister<double> &result) const {
+        if (count < 1) {
+            result.toNull();
+        } else {
+            result = m2 / count;
+        }
+    }
+    inline void getCorrectedStdDev(CalculatorContext ctx, const ResultRegister<double> &result, double correction) const {
+        //fprintf(stderr, "correction=%f\n", correction);
+        //fprintf(stderr, "count=%ld\n", count);
+        //fprintf(stderr, "m2=%f\n", m2);
+        if (count <= correction) {
+            result.toNull();
+        } else {
+            result = sqrt(m2 / (count - correction));
+        }
+    }
+    inline void getMean(CalculatorContext ctx, const ResultRegister<double> &result) const{
+        if (count < 1) {
+            result.toNull();
+        } else {
+            result = mean;
+        }
+    }
+    inline void getCount(CalculatorContext ctx, const ResultRegister<int64_t> &result) const {
+        //fprintf(stderr, "returning count=%ld\n", count);
+        result = count;
+    }
 };
-// Install UDA
-INSTALL_BASE_UDA(welford, Welford)
-// Install getters. These will be the the actual functions that will be referenced in
-// sql CREATE AGGREGATE FUNCTION
+INSTALL_BASE_ANALYTIC(welford, Welford)
 INSTALL_UDA_RESULT_FUNCTION(welfordSampVariance, welford, Welford, getSampVariance)
 INSTALL_UDA_RESULT_FUNCTION(welfordPopVariance, welford, Welford, getPopVariance)
+INSTALL_UDA_RESULT_FUNCTION(welfordCorrectedStdDev, welford, Welford, getCorrectedStdDev)
 INSTALL_UDA_RESULT_FUNCTION(welfordMean, welford, Welford, getMean)
 INSTALL_UDA_RESULT_FUNCTION(welfordCount, welford, Welford, getCount)
+
+class ComplexWelford : public ComplexAnalytic {
+    Welford acc;
+public:
+    // if not specified, then 4096 is used
+    static constexpr int MaxSerializeSize = sizeof(Welford);
+    inline void add(CalculatorContext ctx, double value) {
+        acc.add(ctx, value);
+    }
+
+    inline void drop(CalculatorContext ctx, double value) {
+        acc.drop(ctx, value);
+    }
+
+    inline void addAccumulator(CalculatorContext ctx, varbinary_t other) {
+        assert(other.size == sizeof(acc));
+        acc.addAccumulator(ctx, *reinterpret_cast<const Welford *>(other.data));
+    }
+
+    inline void dropAccumulator(CalculatorContext ctx, varbinary_t other) {
+        acc.dropAccumulator(ctx, *reinterpret_cast<const Welford *>(other.data));
+    }
+
+    void inline init() {
+        acc = Welford();
+    }
+
+    int serialize(uint8_t *buf, uint &len, uint maxSerializedSize, int chunkIndex) {
+        assert(chunkIndex == 0);
+        //fprintf(stderr, "serializing max size=%d\n", maxSerializedSize);
+        memcpy(buf, &acc, sizeof(Welford));
+        len = sizeof(Welford);
+        return -1;
+    }
+
+    inline void getSampVariance(CalculatorContext ctx, const ResultRegister<double> &result) const {
+        acc.getSampVariance(ctx, result);
+    }
+    inline void getPopVariance(CalculatorContext ctx, const ResultRegister<double> &result) const {
+        acc.getPopVariance(ctx, result);
+    }
+    inline void getCorrectedStdDev(CalculatorContext ctx, const ResultRegister<double> &result, double correction) const {
+        acc.getCorrectedStdDev(ctx, result, correction);
+    }
+    inline void getMean(CalculatorContext ctx, const ResultRegister<double> &result) const{
+        acc.getMean(ctx, result);
+    }
+    inline void getCount(CalculatorContext ctx, const ResultRegister<int64_t> &result) const {
+        acc.getCount(ctx, result);
+    }
+};
+
+INSTALL_BASE_ANALYTIC(cwelford, ComplexWelford)
+INSTALL_UDA_RESULT_FUNCTION(cwelfordSampVariance, cwelford, ComplexWelford, getSampVariance)
+INSTALL_UDA_RESULT_FUNCTION(cwelfordPopVariance, cwelford, ComplexWelford, getPopVariance)
+INSTALL_UDA_RESULT_FUNCTION(cwelfordCorrectedStdDev, cwelford, ComplexWelford, getCorrectedStdDev)
+INSTALL_UDA_RESULT_FUNCTION(cwelfordMean, cwelford, ComplexWelford, getMean)
+INSTALL_UDA_RESULT_FUNCTION(cwelfordCount, cwelford, ComplexWelford, getCount)
 
 // A UDA that is not flat. We need to inherit from ComplexUda. UDA infrastructure will handle
 // memory management.
@@ -245,5 +377,4 @@ public:
 };
 INSTALL_BASE_UDA(concatter, StringConcatter)
 INSTALL_UDA_RESULT_FUNCTION(strlist, concatter, StringConcatter, getResult)
-
 // End sampleUdfs.cpp
